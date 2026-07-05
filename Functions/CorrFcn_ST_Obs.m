@@ -1,6 +1,5 @@
 function K = CorrFcn_ST_Obs(xvec,maxlag)
 
-
     % xvec: var * time (e.g. monthly data)
     % The lag variable is sampled as the same as input xvec.
     
