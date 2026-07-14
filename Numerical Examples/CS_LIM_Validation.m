@@ -1,13 +1,13 @@
 %% Numerical 
 clc; close all; clear all;
 
+restoredefaultpath 
+addpath("../Function/")
 
-%　rmpath('../CS Linear Inverse Model/')
-Type = "Colored";
-
+Type = "Colored"
 
 % Noise correlation time
-Gam = 0.5;
+Gam = 0.2;
 
 % Mean state of dynamics
 Amean = 1.2*[ -1.0, 0.5, 1.0;
@@ -33,7 +33,7 @@ A = zeros(n,n,N);
 D = zeros(n,n,N);
 
 
-% Enfore periodicity
+% Enforce periodicity
 tCp = dt*(0:(N-1));
 for k = 1:N
 
@@ -54,15 +54,15 @@ At = mat2fun(A,tp);
 Dt = mat2fun(D,tp);
 
 
-tt_Ratio = 1;
+tt_Ratio = 10;
 dt_integration = dt/tt_Ratio; % Integration timestep
 
 
 %%% Simulation
 rng('twister')
 myopt = struct();
-xvec = CS_Generate_timeseries(Type,At,Q,Dt,Gam,10000,dt,myopt);
-xvec = xvec(1:n,1:tt_Ratio:end);
+xvec = CS_Generate_timeseries(Type,At,Q,Dt,Gam,10000,dt_integration,myopt);
+xvec = xvec(1:n,1:tt_Ratio:end); % Sparse observation
 
 %%
 clc;
@@ -78,22 +78,21 @@ K_CS_obs = CorrFcn_CS_Obs(xvec,dt,maxlag);
 disp('Relative error in lagged covariance function')
 rel_err(K_CS_obs,K)
 
+% K_CS_obs = K; % What happenes if we have infinite observation? The estimation error mainly arises from numerical errors
 
-% Smooth the correlation function
+% Observed lagged covariance and its derivatives
+N0 = squeeze( K_CS_obs(:,:,:,1) );
+N1 = squeeze( -K_CS_obs(:,:,:,1) + K_CS_obs(:,:,:,2) ) / dt;
+N2 = squeeze( K_CS_obs(:,:,:,1) -2*K_CS_obs(:,:,:,2) + K_CS_obs(:,:,:,3) ) / dt^2;
+
+% Smooth the statistics
 myopt = struct();
 myopt.fs = N;
 myopt.fpass = 0.05*N;
-K_CS_obs = Phase_Averaging(K_CS_obs,myopt);
 
-K_CS_obs = K; % What happenes if we have infinite observation? The estimation error mainly arises from numerical errors
-
-% Observed covariance
-C_CS_obs = squeeze(K_CS_obs(:,:,:,1));
-
-% Derivatives
-N0 = K_CS_obs(:,:,:,1);
-N1 = ( -K_CS_obs(:,:,:,1) + K_CS_obs(:,:,:,2) ) / dt;
-N2 = ( K_CS_obs(:,:,:,1) -2*K_CS_obs(:,:,:,2) + K_CS_obs(:,:,:,3) ) / dt^2;
+N0 = Phase_Averaging(N0,myopt);
+N1 = Phase_Averaging(N1,myopt);
+N2 = Phase_Averaging(N2,myopt);
 
 %% Linear inverse modeling 
 clc;
@@ -102,69 +101,15 @@ myopt = struct();
 myopt.Solve_Diffusion = "Analytic";
 myopt.FM = 1;
 
-myopt.A = A;
-myopt.Q = Q;
-
 [ALIM,QLIM,DLIM,h] = CS_LIM(Type,N0,N1,N2,Gam,myopt);
 
+disp("The relative errors are: ")
+str = strcat("A: ",  num2str(100*rel_err(ALIM,A),'%3.2f'),"%");
+disp(str)
+str = strcat("Q: ",  num2str(100*rel_err(QLIM,Q),'%3.2f'),"%");
+disp(str)
+str = strcat("D: ",  num2str(100*rel_err(DLIM,D),'%3.2f'),"%");
+disp(str)
 
-disp('Relative error in estimate')
-rel_err(ALIM,A)
-rel_err(QLIM,Q)
-rel_err(DLIM,D)
 
-%%
 
-r1 = pagemtimes(sqrtm(2*Q),h_K.C(n+1:end,1:n,:));
-r2 = pagemtimes(Q,pagetranspose(h.B));
-
-rel_err(r1,r2)
-
-r1 = pagemtimes(sqrtm(2*Q),h_K.C(n+1:end,1:n,:));
-r2 = pagemtimes(Q,h.B);
-
-rel_err(r1,r2)
-
-% %%
-% 
-% close all;
-% 
-% k = 0;
-% for i = 1:n
-%     for j = 1:n
-%         k = k + 1;
-%         subplot(n,n,k)
-%         v = A(i,j,:);
-%         plot(tp,v(:)); hold on;
-%         v = ALIM(i,j,:);
-%         plot(tp,v(:)); hold on;
-%     end
-% end
-% 
-% figure
-% k = 0;
-% for i = 1:n
-%     for j = 1:n
-%         k = k + 1;
-%         subplot(n,n,k)
-%         v = N0(i,j,:);
-%         plot(v(:)); hold on;
-%         v = K(i,j,:,1);
-%         plot(v(:)); hold on;
-%     end
-% end
-% 
-% figure
-% k = 0;
-% for i = 1:n
-%     for j = 1:n
-%         k = k + 1;
-%         subplot(n,n,k)
-%         v = DLIM(i,j,:);
-%         plot(v(:)); hold on;
-%         v = D(i,j,:);
-%         plot(v(:)); hold on;
-%     end
-% end
-% 
-% 
