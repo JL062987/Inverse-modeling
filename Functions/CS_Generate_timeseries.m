@@ -54,6 +54,6 @@ function [xvec,h] = CS_Generate_timeseries(Type,A,Q,D,Gam,TT,dt,myopt)
         xvec = xvec(:,1:n)'; 
     end
     
-    xvec = xvec(:,round(T_spin/dt+1):1:end-1);
+    xvec = xvec(:,round(T_spin/dt+1):end-1); % Remove spin-up 
 
 end

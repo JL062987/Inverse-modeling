@@ -19,6 +19,7 @@ function [A,Q,D,h] = CS_LIM(Type,N0,N1,N2,Gam,myopt)
     [n,~,N] = size(N0);
     dt = 1/N; % Timestep
 
+    if Type == "White"; Gam = 0; end
     if isscalar(Gam); Gam = Gam*ones(n,1); end
 
     tCp = (0:(N-1))/N;
@@ -49,6 +50,14 @@ function [A,Q,D,h] = CS_LIM(Type,N0,N1,N2,Gam,myopt)
         AA = SolveEqwithFM(kron(XX',eye(n)),vec(ZZ),myopt.FM);
     else
         AA = reshape( kron(XX',eye(n)) \ vec(ZZ), n,n,[] );
+        
+        % Check if A is stable. If not, then impose Fourier-mode truncation
+        A = reshape(AA,n,n,[]);
+        if sum( abs(eig(Monodromy(A)))<1 ) ~= n
+            myopt.FM = 2;
+            AA = SolveEqwithFM(kron(XX',eye(n)),vec(ZZ),myopt.FM);
+        end
+
     end
 
     A = reshape(AA,n,n,[]);
@@ -75,14 +84,14 @@ function [A,Q,D,h] = CS_LIM(Type,N0,N1,N2,Gam,myopt)
         else
 
             At = mat2fun(A,tAp);
-
+            
             Gaminv = eye(n)./Gam;
-            [BT,h_PerSol] = Periodic_Sol_demo( @(t) kron( -Gaminv + At(t), speye(n) ) , @(t) vec( Gaminv ) , tCp );
+            [BT,h_PerSol] = Periodic_Sol( @(t) kron( -Gaminv + At(t), speye(n) ) , @(t) vec( Gaminv ) , tCp );
             BT = reshape(BT,n,n,[]); % This is B^T!!
             B = pagetranspose(BT); % Transpose back to be B!
             h.B = B;
 
-            if h_PerSol.myflag == 1 || sum( isnan(B(:)) ) > 0 
+            if h_PerSol.flag == 1 || sum( isnan(B(:)) ) > 0 
                 Q = zeros(n,n);
                 D = zeros(n,n,N);
             else
@@ -98,6 +107,7 @@ function [A,Q,D,h] = CS_LIM(Type,N0,N1,N2,Gam,myopt)
                     elseif Type == "CW"    
                         [Q,D] = Loss_CS_CW_LIM(Gam,A,B,N0,N1,dC,At,Bt);    
                     end
+                    
                 else
 
                     if Type == "Colored"

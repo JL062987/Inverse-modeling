@@ -13,4 +13,8 @@ function [L,S,sq2S] = ST_to_Aug_System(Gam,A,Q,D)
     else
         sq2S = [ sqrtm(2*D), zeros(n);   zeros(n), diag( 1./Gam )];
     end
+
+
+
+    
 end
