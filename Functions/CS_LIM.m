@@ -1,8 +1,14 @@
 function [A,Q,D,h] = CS_LIM(Type,N0,N1,N2,Gam,myopt)
 
-% Input
-%   K: Cyclostationary correlation function
-%   Gam: Noise correlation time
+    % Input
+    %   K: Cyclostationary correlation function
+    %   Gam: Noise correlation time
+
+    % Output
+    %   A, Q, D: System parameters
+    %   h (struct): history
+
+    h = struct();
 
     if nargin < 6
         myopt = struct();
@@ -15,6 +21,10 @@ function [A,Q,D,h] = CS_LIM(Type,N0,N1,N2,Gam,myopt)
         Solve_Diffusion = "Loss_Function";
     end
 
+    if ~isfield(myopt,'Fourier_mode_when_unstable')
+        myopt.Fourier_mode_when_unstable = true;
+    end
+
 
     [n,~,N] = size(N0);
     dt = 1/N; % Timestep
@@ -25,10 +35,10 @@ function [A,Q,D,h] = CS_LIM(Type,N0,N1,N2,Gam,myopt)
     tCp = (0:(N-1))/N;
     tAp = tCp+0.5*dt;
 
-    % Derivative of covariance
-    dC = Phase_Derivative(N0) ;
+    % Derivative of covariance function
+    dC = (circshift(N0,-1,3) - N0) / dt;
 
-    % Estimate the dynamics
+    %% Estimate the dynamics
     XX = zeros(n*N,n*N);
     ZZ = zeros(n,n*N);
 
@@ -51,19 +61,26 @@ function [A,Q,D,h] = CS_LIM(Type,N0,N1,N2,Gam,myopt)
     else
         AA = reshape( kron(XX',eye(n)) \ vec(ZZ), n,n,[] );
         
-        % Check if A is stable. If not, then impose Fourier-mode truncation
-        A = reshape(AA,n,n,[]);
-        if sum( abs(eig(Monodromy(A)))<1 ) ~= n
-            myopt.FM = 2;
-            AA = SolveEqwithFM(kron(XX',eye(n)),vec(ZZ),myopt.FM);
+        if myopt.Fourier_mode_when_unstable
+            % Check if A is stable. If not, then impose Fourier-mode truncation
+            A = reshape(AA,n,n,[]);
+            [z,h_Check] = CheckStability(A);
+            if z == 1 
+                myopt.FM = 2;
+                AA = SolveEqwithFM(kron(XX',eye(n)),vec(ZZ),myopt.FM);
+                h.message = strcat( "Fourier-mode truncation is imposed due to ", h_Check.message );
+                h.message_short = h_Check.message_short;
+                % disp(h.message)
+            end
         end
+
 
     end
 
     A = reshape(AA,n,n,[]);
     
     % Check if the dynamcis is stable.
-    if sum( abs(eig(Monodromy(A)))<1 ) ~= n % || CheckStability(A(1,1,:)) ||  CheckStability(A(n,n,:))
+    if CheckStability_Monodromy(A) == 1
 
         h.flag = 1;
         
@@ -181,6 +198,7 @@ function [A,Q,D,h] = CS_LIM(Type,N0,N1,N2,Gam,myopt)
         % A = A*F;
         x = F*((Ap*F)\bp);
         x = x(q);
+
     end
 
     function Q = SolveEqwithSymmetric(X,b)
@@ -208,35 +226,137 @@ function y = Sym(x)
 end
 
 
-function dCC = Phase_Derivative(CC)
-
-    % A: the time dependent dynamics
-    % C: the covariacne function
-    % dCC: the time derivative of C
+% Check if the dynamics is stable or not via Floquet exponents
+function [z,h] = CheckStability_Monodromy(x)
     
-    
-    [~,~,T] = size(CC);
-    
-    dt = 1/T; 
-    
-    dCC = zeros(size(CC));
-
-    for t = 1:T  
-
-        t1 = mymod( t, T );
-        t2 = mymod( t+1, T ); 
-        dCC(:,:,t) = squeeze( CC(:,:,t2) - CC(:,:,t1) ) / (dt); 
-
+    if max(abs(eig(Monodromy(x)))) > 1 % Unstable dynamics
+        z = 1; % Unstable
+        h.message = "unstable Floquet multiplier.";
+        h.message_short = "US"; % Unstable
+    else
+        z = 0;
+        h = struct();
     end
     
 end
 
-function z = CheckStability(X)
-% Check if the high frequency part
-    N = length(X);
-    Y = fft(vec(X));
-    P2 = abs(Y/N);
-    P1 = P2(1:N/2+1);
-    P1(2:end-1) = 2*P1(2:end-1);
-    z = P1(end) > P1(1); % z = 1: Unstable
+
+% Check if the dynamics is stable entrywise (for the largest n variables) via Frequency analysis
+function [z,h] = CheckStability_HighFrequency(x)
+
+    [n,~,N] = size(x);
+
+    x = reshape(x,[],N);
+    [~,b] = maxk(vecnorm(x,2,2),n);
+
+    for i = b(:)'
+        y = vec(x(i,:));
+        y = y - mean(y); % Remove mean
+
+        % High-frequency signal?
+        energy = abs(fft(vec(y))).^2;
+        totalEnergy = sum(energy);
+
+        onesideEnergy = energy(1:N/2+1);
+        onesideEnergy(2:end-1) = 2*onesideEnergy(2:end-1);
+        
+        EnergyDistribution = onesideEnergy / totalEnergy;
+        highFrequencyRatio = sum( EnergyDistribution(end-1:end) );
+
+        if highFrequencyRatio > 0.4
+            % EnergyDistribution
+            z = 1; % Unstable
+            h.message = "excessive high-frequency energy.";
+            h.message_short = "HF"; % High frequency
+            
+            % close all;
+            % plot(y)
+            % drawnow
+            return
+        end
+
+    end
+
+    z = 0;
+    h = struct();
+
 end
+
+% Check if the dynamics is stable entrywise (for the largest n variables) via peak analysis
+function [z,h] = CheckStability_AbnormalPeak(x)
+
+    [n,~,N] = size(x);
+
+    x = reshape(x,[],N);
+    [~,b] = maxk(vecnorm(x,2,2),n);
+
+    for i = b(:)'
+        y = vec(x(i,:));
+        y = y - mean(y); % Remove mean
+
+        % An abnormal peak?
+        score = (y).^2;
+        totalScore = sum( score );
+
+        ScoreDistribution = score / totalScore;
+        PeakRatio1 = sum(maxk(ScoreDistribution,1));
+        PeakRatio2 = sum(maxk(ScoreDistribution,2));
+
+        if PeakRatio1 > 0.45 || PeakRatio2 > 0.65
+            z = 1; % Unstable
+            h.message = "abnormal local curvature.";
+            h.message_short = "PK"; % peak
+            
+            % hold off;
+            % yyaxis left;
+            % plot(y); hold on;
+            % hold off;
+            % yyaxis right
+            % plot(ScoreDistribution); hold on;
+            % ylim([0,0.7])
+            % title(strcat(num2str(i)," --- ",num2str(100*PeakRatio2,'%3.1f')))
+            % 
+            % drawnow
+            % pause(0.2)
+            
+            return
+        end
+
+    end
+
+    z = 0;
+    h = struct();
+
+end
+
+
+function [z,h] = CheckStability(x)
+
+    % z: 1/0 (unstable/stable)
+    % h.messgage (h.message_short): reason for instability
+
+    % Check if the dynamics is stable or not via Floquet exponents
+    [z,h] = CheckStability_Monodromy(x);
+    if z == 1; return; end
+
+    % Check if the dynamics is stable entrywise (for the largest n variables)
+    [z,h] = CheckStability_HighFrequency(x);
+    if z == 1; return; end
+    
+    % Check if the dynamics is stable entrywise (for the largest n variables)
+    [z,h] = CheckStability_AbnormalPeak(x);
+    if z == 1; return; end
+       
+    % if the system is stable
+    z = 0;
+    h = struct();
+    h.message = [];
+    h.message_short = [];
+
+
+end
+
+
+
+
+
